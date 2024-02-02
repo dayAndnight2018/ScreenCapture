@@ -1,12 +1,8 @@
-﻿using System;
+﻿using Microsoft.Win32;
+using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
+using System.Text.Json;
 using System.Windows.Forms;
 
 namespace ScreenCapture
@@ -106,14 +102,32 @@ namespace ScreenCapture
             kh.OnKeyDownEvent += kh_OnKeyDownEvent;
             this.ShowInTaskbar = false;
             this.Hide();
-            //this.TopMost = true;
+            this.SetStyle(ControlStyles.AllPaintingInWmPaint, true);
+
+            this.SetStyle(ControlStyles.DoubleBuffer, true);
+
+            this.SetStyle(ControlStyles.UserPaint, true);
+
+            this.SetStyle(ControlStyles.ResizeRedraw, true);            // this.TopMost = true;
+
+            var shotKey = quertSubKey("shot");
+            if (shotKey != null)
+            {
+                DefaultScreenKeys = shotKey.Value;
+            }
+
+            var snapKey = quertSubKey("snap");
+            if (snapKey != null)
+            {
+                DefaultSniffKeys = snapKey.Value;
+            }
         }
 
-        public void setShortCutKeys(ShortCutKeysType type, Keys keys)
+        public bool setShortCutKeys(ShortCutKeysType type, Keys keys)
         {
             if(keys == Keys.None)
             {
-                return;
+                return false;
             }
             else
             {
@@ -121,11 +135,57 @@ namespace ScreenCapture
                 {
                     case ShortCutKeysType.截图:
                         DefaultScreenKeys = keys;
-                        break;
+                        return createSubKey("shot", keys);
                     case ShortCutKeysType.吸取:
                         DefaultSniffKeys = keys;
-                        break;
+                        return createSubKey("snap", keys);
+                    default:
+                        return false;
                 }
+            }
+        }
+
+        private Keys? quertSubKey(String key)
+        {
+             try
+            {
+                RegistryKey machine = Registry.LocalMachine;
+                RegistryKey software = machine?.OpenSubKey(@"SOFTWARE", true);
+                RegistryKey snapshot = software?.OpenSubKey("SNAPSHOT", true);
+                RegistryKey regkey = snapshot?.OpenSubKey(key, true);
+                var str = regkey.GetValue(key).ToString();
+                return JsonSerializer.Deserialize<Keys>(str);
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+        private bool createSubKey(String key, Keys val)
+        {
+             try
+            {
+                RegistryKey machine = Registry.LocalMachine;
+                RegistryKey software = machine.OpenSubKey(@"SOFTWARE", true);
+                RegistryKey snapshot = software?.OpenSubKey("SNAPSHOT", true);
+                if (snapshot == null)
+                {
+                    software.CreateSubKey("SNAPSHOT");
+                    snapshot = software?.OpenSubKey("SNAPSHOT", true);
+                }
+                RegistryKey regkey = snapshot?.OpenSubKey(key, true);
+                if (regkey == null)
+                {
+                    snapshot.CreateSubKey(key);
+                    regkey = snapshot?.OpenSubKey(key, true);
+                }
+                regkey.SetValue(key, JsonSerializer.Serialize<Keys>(val));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                return false;
             }
         }
 
@@ -183,18 +243,36 @@ namespace ScreenCapture
         /// </summary>
         public void Deal()
         {
-            orgin = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
+            var screen = Screen.FromPoint(Cursor.Position);
+            orgin = new Bitmap(screen.Bounds.Width, screen.Bounds.Height);
             Graphics g = Graphics.FromImage(orgin);
-            g.CopyFromScreen(new Point(0, 0), new Point(0, 0), Screen.PrimaryScreen.Bounds.Size);
+            //g.CopyFromScreen(new Point(0, 0), new Point(0, 0), screen.Bounds.Size);
+            g.CopyFromScreen(screen.Bounds.Location, new Point(0, 0), screen.Bounds.Size);
             pictureBox1.Image = orgin;
             g.Dispose();
-            this.WindowState = FormWindowState.Maximized;
+            //this.Left = (screen.Bounds.Width - this.Width) / 2;
+            //this.Top = (screen.Bounds.Height - this.Height) / 2;
+            this.StartPosition = FormStartPosition.Manual;
+            this.Left = screen.WorkingArea.Location.X;
+            this.Top = screen.WorkingArea.Location.Y;
+            this.Size = new Size(screen.Bounds.Width, screen.Bounds.Height);
+            this.Location = new Point(screen.Bounds.Left, screen.Bounds.Top);
+
+            Rectangle area = Screen.FromHandle(this.Handle).WorkingArea;
+            area.X = 0;
+            this.MaximizedBounds = area;
+            this.MaximumSize = area.Size;
+
+            //this.WindowState = FormWindowState.Maximized;
+            this.Activate();
             this.Visible = true;
-            this.Opacity = 1;
+            this.Opacity = 0.8;
+            this.TopMost = true;
         }
 
         private Point getColorSniffPanLocation(ColorSniffPan colorSniffPan, Point e)
         {
+            var screen = Screen.FromPoint(Cursor.Position);
             Point p = new Point(e.X+1,e.Y+1);
 
             if (p.X < 0)
@@ -202,13 +280,13 @@ namespace ScreenCapture
                 p.X = 0;
             }
 
-            if (p.Y + colorSniffPan.Height > Screen.PrimaryScreen.WorkingArea.Height)
+            if (p.Y + colorSniffPan.Height > screen.WorkingArea.Height)
             {
                 p.Y = e.Y - 1 - colorSniffPan.Height;
             }
-            if (p.X + colorSniffPan.Width > Screen.PrimaryScreen.WorkingArea.Width)
+            if (p.X + colorSniffPan.Width > screen.WorkingArea.Width)
             {
-                p.X = Screen.PrimaryScreen.WorkingArea.Width - 1 - colorSniffPan.Width;
+                p.X = screen.WorkingArea.Width - 1 - colorSniffPan.Width;
             }
             return p;
         }
@@ -327,8 +405,9 @@ namespace ScreenCapture
                 cap = false;
                 this.Hide();
                 WindowState = FormWindowState.Minimized;
+                this.TopMost = false;
             }
-                        
+
         }
 
 
@@ -1035,6 +1114,7 @@ namespace ScreenCapture
         /// <returns></returns>
         private Point getToolBarLocation(ToolBar toolBar, SettingPan settingPan, Point e,Rectangle rectangle)
         {
+            var screen = Screen.FromPoint(Cursor.Position);
             Point p;
             if(rectangle.Width >= toolBar.Width)
             {
@@ -1049,13 +1129,13 @@ namespace ScreenCapture
             {
                 p.X = 0;
             }
-            if (p.Y + toolBar.Height + settingPan.Height > Screen.PrimaryScreen.WorkingArea.Height)
+            if (p.Y + toolBar.Height + settingPan.Height > screen.WorkingArea.Height)
             {
                 p.Y = e.Y - 1 - toolBar.Height - settingPan.Height;
             }
-            if(p.X  + toolBar.Width > Screen.PrimaryScreen.WorkingArea.Width )
+            if(p.X  + toolBar.Width > screen.WorkingArea.Width )
             {
-                p.X = Screen.PrimaryScreen.WorkingArea.Width - 1 - toolBar.Width;
+                p.X = screen.WorkingArea.Width - 1 - toolBar.Width;
             }           
             return p;
         }
@@ -1067,6 +1147,7 @@ namespace ScreenCapture
             {
                 this.Visible = false;
                 this.WindowState = FormWindowState.Minimized;
+                this.TopMost = false;
                 Reset();
                 release();
             });
@@ -1091,6 +1172,7 @@ namespace ScreenCapture
 
                         this.Visible = false;
                         this.WindowState = FormWindowState.Minimized;
+                        this.TopMost = false;
                         Reset();
                         release();
                         this.notifyIcon.ShowBalloonTip(3000, "截图助手", "截图文件保存成功！", ToolTipIcon.Info);
@@ -1397,9 +1479,12 @@ namespace ScreenCapture
                     var part = this.results.Peek().Clone(region, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
                     Clipboard.Clear();
                     Clipboard.SetImage(part);
+                    part.Dispose();
+                    part = null;
                 }
                 this.Visible = false;
                 this.WindowState = FormWindowState.Minimized;
+                this.TopMost = false;
                 Reset();
                 release();
             };
@@ -1410,11 +1495,38 @@ namespace ScreenCapture
         /// </summary>
         private void release()
         {
-            this.orgin = null;
-            this.pictureBox1.Image = null;
+            if (this.orgin != null)
+            {
+                this.orgin.Dispose();
+                this.orgin = null;
+            }
+
+            if (this.pictureBox1.Image != null)
+            {
+                this.pictureBox1.Image.Dispose();
+                this.pictureBox1.Image = null;
+            }
+            
             pictureBox1.Controls.Clear();
+
+            while(this.bitmaps.Count > 0)
+            {
+                var tmp = this.bitmaps.Pop();
+                tmp.Dispose();
+                tmp = null;
+            }
+
             this.bitmaps.Clear();
+
+            while (this.results.Count > 0)
+            {
+                var tmp = this.results.Pop();
+                tmp.Dispose();
+                tmp = null;
+            }
             this.results.Clear();
+
+            GC.Collect();
         }
 
         private void Reset()
